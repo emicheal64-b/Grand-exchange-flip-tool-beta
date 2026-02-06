@@ -1,0 +1,21 @@
+{
+  "appName": "Astrallias GE Tracker",
+  "description": "Full-featured OCR GE flipping assistant for RuneScape 3",
+  "author": "Astrallias",
+  "version": "1.0.0",
+  "appUrl": "./index.html",
+  "iconUrl": "./assets/icon.png",
+  "requestHandlers": [],
+  "activators": [],
+  "permissions": [
+    "pixel",
+    "overlay",
+    "gamestate",
+    "chat",
+    "clipboard",
+    "keyboard",
+    "mouse",
+    "websocket"
+  ]
+}
+

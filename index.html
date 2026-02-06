@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Astrallias GE Tracker</title>
+
+<script src="https://runeapps.org/alt1lib/alt1lib.js"></script>
+<script src="https://runeapps.org/alt1lib/util.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body{background:#0b0b0b;color:#e5e5e5;font-family:Arial;padding:10px}
+h1{font-size:18px;margin-bottom:6px}
+input,button{width:100%;padding:6px;margin:4px 0;background:#161616;border:1px solid #333;color:#fff}
+.panel{background:#121212;border:1px solid #2a2a2a;padding:8px;margin-top:8px}
+.good{color:#4cff4c}.warn{color:#ffd24c}.bad{color:#ff4c4c}
+canvas{background:#0b0b0b;border:1px solid #333;margin-top:8px}
+table{width:100%;font-size:12px;margin-top:6px}
+</style>
+</head>
+
+<body>
+<h1>💰 Astrallias GE Tracker</h1>
+
+<div class="panel">
+<input id="item" placeholder="Item name">
+<input id="buy" placeholder="Buy price">
+<input id="sell" placeholder="Sell price">
+<input id="qty" value="1" placeholder="Quantity">
+<input id="minMargin" value="25000" placeholder="Min alert margin">
+
+<button onclick="readPrices()">📷 OCR Read</button>
+<button onclick="calculate()">📈 Calculate</button>
+<button onclick="saveFlip()">💾 Save Flip</button>
+<button onclick="calibrate()">🎯 Calibrate OCR</button>
+<button onclick="toggleHover()">👁 Hover Scan</button>
+<button onclick="blacklistItem()">🚫 Blacklist Item</button>
+<button onclick="resetSession()">♻️ Reset Session</button>
+<button onclick="exportJSON()">📤 Export Session</button>
+<button onclick="importJSON()">📥 Import Session</button>
+</div>
+
+<div class="panel" id="output"></div>
+<div class="panel" id="session"></div>
+<div class="panel">
+<b>📊 Flip History</b>
+<table id="history"></table>
+</div>
+
+<div class="panel">
+<h2>📈 Charts</h2>
+<canvas id="profitChart" height="100"></canvas>
+<canvas id="flipsChart" height="100"></canvas>
+<canvas id="successChart" height="100"></canvas>
+</div>
+
+<div class="panel">
+<h2>🏆 Top Items</h2>
+<table id="topItems"></table>
+</div>
+
+<script>
+if(!window.alt1) document.body.innerHTML="Open in Alt1";
+
+// === Variables ===
+const reader = new OCRReader();
+let regions = JSON.parse(localStorage.getItem("regions"));
+let flips = JSON.parse(localStorage.getItem("flips")||"[]");
+let blacklist = JSON.parse(localStorage.getItem("blacklist")||"[]");
+let hoverMode=false, sessionProfit=0, sessionFlips=0, sessionStart=Date.now();
+let profitData=[], flipsData=[], successData=[0,0];
+
+// === Charts Setup ===
+const profitChart = new Chart(document.getElementById("profitChart").getContext("2d"), {
+    type: "line",
+    data: { labels: [], datasets: [{ label: "Session Profit", data: profitData, borderColor: "#4cff4c", fill: false }] },
+    options: { responsive:true, scales:{ x:{ title:{display:true,text:"Flips"} }, y:{ title:{display:true,text:"GP"} } } }
+});
+const flipsChart = new Chart(document.getElementById("flipsChart").getContext("2d"), {
+    type: "line",
+    data: { labels: [], datasets: [{ label: "Flips per Hour", data: flipsData, borderColor: "#ffd24c", fill: false }] },
+    options: { responsive:true, scales:{ x:{ title:{display:true,text:"Time"} }, y:{ title:{display:true,text:"Flips"} } } }
+});
+const successChart = new Chart(document.getElementById("successChart").getContext("2d"), {
+    type: "doughnut",
+    data: { labels: ["Profit","Loss"], datasets: [{ data: successData, backgroundColor: ["#4cff4c","#ff4c4c"] }] },
+    options: { responsive:true, plugins:{ legend:{ position:"bottom" } } }
+});
+
+// === Functions ===
+function calibrate(){
+    alt1.overLayText("Click BUY price box",200,200,3000,"#ffd24c");
+    alt1.once("mouseup",e=>{const buy={x:e.x-80,y:e.y-20,w:160,h:40};
+    alt1.overLayText("Click SELL price box",200,200,3000,"#ffd24c");
+    alt1.once("mouseup",e2=>{regions={buy,sell:{x:e2.x-80,y:e2.y-20,w:160,h:40}}; localStorage.setItem("regions",JSON.stringify(regions));
+    alt1.overLayText("Calibration saved",200,200,2000,"#4cff4c");});});
+}
+function readPrices(){
+    if(!regions) return warn("Calibrate first");
+    const img = alt1.captureScreen();
+    const buy = parseInt(reader.read(img,regions.buy).replace(/\D/g,'')),
+          sell = parseInt(reader.read(img,regions.sell).replace(/\D/g,''));
+    if(buy) document.getElementById("buy").value=buy;
+    if(sell) document.getElementById("sell").value=sell;
+    calculate();
+}
+function calculate(){
+    const buy=Number(document.getElementById("buy").value),
+          sell=Number(document.getElementById("sell").value),
+          qty=Number(document.getElementById("qty").value);
+    if(!buy||!sell) return;
+    const margin=sell-buy,total=margin*qty,percent=((margin/buy)*100).toFixed(2);
+    const name=document.getElementById("item").value.toLowerCase();
+    let cls="bad", label="Bad";
+    if(margin>=100000) cls="good", label="🔥 Excellent";
+    else if(margin>=25000) cls="good", label="🟢 Good";
+    else if(margin>=5000) cls="warn", label="🟡 OK";
+    document.getElementById("output").innerHTML=`<b>${document.getElementById("item").value||"Item"}</b><br>
+Margin: <span class="${cls}">${margin.toLocaleString()} gp</span> (${percent}%)<br>
+Heat: ${heat(margin)}<br>Total: <b>${total.toLocaleString()} gp</b><br>
+Success Rate: ${successRate(document.getElementById("item").value)}%<br>
+Rating: ${label}`;
+    if(margin>=Number(document.getElementById("minMargin").value)&&!blacklist.includes(name))
+        alt1.overLayText(`🔥 +${total.toLocaleString()} gp`, alt1.mousePosition.x, alt1.mousePosition.y, 2000,"#4cff4c");
+}
+function saveFlip(){
+    const buy=Number(document.getElementById("buy").value),
+          sell=Number(document.getElementById("sell").value),
+          qty=Number(document.getElementById("qty").value);
+    if(!buy||!sell) return;
+    const flip={item:document.getElementById("item").value,buy,sell,qty,time:Date.now()};
+    flips.unshift(flip); flips=flips.slice(0,50); localStorage.setItem("flips",JSON.stringify(flips));
+    const profit=(sell-buy)*qty; sessionProfit+=profit; sessionFlips++;
+    profitData.push(sessionProfit);
+    flipsData.push(sessionFlips/((Date.now()-sessionStart)/3600000));
+    if(profit>0) successData[0]++; else successData[1]++;
+    updateCharts(); updateSession(); renderHistory(); renderTopItems();
+}
+function updateCharts(){
+    profitChart.data.labels=profitData.map((_,i)=>i+1); profitChart.update();
+    flipsChart.data.labels=flipsData.map((_,i)=>i+1); flipsChart.update();
+    successChart.update();
+}
+function updateSession(){
+    const hrs=(Date.now()-sessionStart)/3600000;
+    document.getElementById("session").innerHTML=`<b>Session Stats</b><br>Profit: ${sessionProfit.toLocaleString()} gp<br>Flips: ${sessionFlips}<br>GP/hr: ${(sessionProfit/hrs||0).toLocaleString()}`;
+}
+function renderHistory(){
+    document.getElementById("history").innerHTML=flips.map(f=>{const m=f.sell-f.buy;return `<tr><td>${f.item}</td><td>${m.toLocaleString()}</td><td>${(m*f.qty).toLocaleString()}</td></tr>`}).join("");
+}
+function renderTopItems(){
+    const stats={};
+    flips.forEach(f=>{if(!stats[f.item]) stats[f.item]={profit:0,count:0};
+    stats[f.item].profit+=(f.sell-f.buy)*f.qty; stats[f.item].count++;});
+    const sorted=Object.entries(stats).sort((a,b)=>b[1].profit-a[1].profit).slice(0,5);
+    document.getElementById("topItems").innerHTML="<tr><th>Item</th><th>Total Profit</th><th>Flips</th></tr>"+
+        sorted.map(([i,s])=>`<tr><td>${i}</td><td>${s.profit.toLocaleString()}</td><td>${s.count}</td></tr>`).join("");
+}
+function blacklistItem(){const name=document.getElementById("item").value.toLowerCase(); if(!blacklist.includes(name)){blacklist.push(name); localStorage.setItem("blacklist",JSON.stringify(blacklist)); warn("Item blacklisted");}}
+function toggleHover(){hoverMode=!hoverMode; warn(hoverMode?"Hover scan ON":"Hover scan OFF");}
+setInterval(()=>{if(hoverMode) readPrices();},1200);
+function resetSession(){sessionProfit=0; sessionFlips=0; sessionStart=Date.now(); profitData=[]; flipsData=[]; successData=[0,0]; updateCharts(); updateSession(); renderTopItems(); warn("Session reset");}
+function exportJSON(){const blob=new Blob([JSON.stringify(flips,null,2)],{type:"application/json"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="flips.json"; a.click();}
+function importJSON(){const input=document.createElement("input"); input.type="file"; input.accept=".json"; input.onchange=e=>{const file=e.target.files[0]; const reader=new FileReader(); reader.onload=ev=>{flips=JSON.parse(ev.target.result); localStorage.setItem("flips",JSON.stringify(flips)); renderHistory(); renderTopItems(); warn("Flips imported"); }; reader.readAsText(file); }; input.click();}
+function heat(m){return m>=200000?"🔥🔥🔥🔥🔥":m>=100000?"🔥🔥🔥🔥":m>=50000?"🔥🔥🔥":m>=10000?"🔥🔥":"🔥";}
+function successRate(i){const f=flips.filter(x=>x.item===i); return f.length?((f.filter(x=>x.sell>x.buy).length/f.length)*100).toFixed(1):0;}
+function warn(t){alt1.overLayText(t,200,200,1500,"#ffd24c");}
+
+// Hotkeys
+document.addEventListener("keydown", e=>{if(e.code==="F8") readPrices(); if(e.code==="F9") saveFlip(); if(e.code==="F10") toggleHover();});
+
+renderHistory(); updateSession(); renderTopItems(); updateCharts();
+
+</script>
+</body>
+</html>
